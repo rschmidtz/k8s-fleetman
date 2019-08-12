@@ -1,3 +1,7 @@
+#
+# Fluentd configuration - this installs onto all nodes and gathers all logs
+# A separate yaml configures Fluentd
+#
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -5,6 +9,7 @@ metadata:
   namespace: kube-system
   labels:
     k8s-app: fluentd-es
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 ---
 kind: ClusterRole
@@ -13,6 +18,7 @@ metadata:
   name: fluentd-es
   labels:
     k8s-app: fluentd-es
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 rules:
 - apiGroups:
@@ -31,6 +37,7 @@ metadata:
   name: fluentd-es
   labels:
     k8s-app: fluentd-es
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 subjects:
 - kind: ServiceAccount
@@ -45,22 +52,24 @@ roleRef:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: fluentd-es-v2.6.0
+  name: fluentd-es-v2.2.0
   namespace: kube-system
   labels:
     k8s-app: fluentd-es
-    version: v2.6.0
+    version: v2.2.0
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 spec:
   selector:
     matchLabels:
       k8s-app: fluentd-es
-      version: v2.6.0
+      version: v2.2.0
   template:
     metadata:
       labels:
         k8s-app: fluentd-es
-        version: v2.6.0
+        kubernetes.io/cluster-service: "true"
+        version: v2.2.0
       # This annotation ensures that fluentd does not get evicted if the node
       # supports critical pod annotation based priority scheme.
       # Note that this does not guarantee admission on the nodes (#40573).
@@ -72,7 +81,7 @@ spec:
       serviceAccountName: fluentd-es
       containers:
       - name: fluentd-es
-        image: quay.io/fluentd_elasticsearch/fluentd:v2.6.0
+        image: k8s.gcr.io/fluentd-elasticsearch:v2.2.0
         env:
         - name: FLUENTD_ARGS
           value: --no-supervisor -q
@@ -90,6 +99,8 @@ spec:
           readOnly: true
         - name: config-volume
           mountPath: /etc/fluent/config.d
+      # nodeSelector:
+      #  beta.kubernetes.io/fluentd-ds-ready: "true"
       terminationGracePeriodSeconds: 30
       volumes:
       - name: varlog
@@ -100,8 +111,14 @@ spec:
           path: /var/lib/docker/containers
       - name: config-volume
         configMap:
-          name: fluentd-es-config-v0.2.0
+          name: fluentd-es-config-v0.1.4
+
+
 ---
+
+#
+# Elastic Search configuration
+#
 apiVersion: v1
 kind: Service
 metadata:
@@ -109,7 +126,7 @@ metadata:
   namespace: kube-system
   labels:
     k8s-app: elasticsearch-logging
-    #kubernetes.io/cluster-service: "true"
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
     kubernetes.io/name: "Elasticsearch"
 spec:
@@ -120,6 +137,7 @@ spec:
   selector:
     k8s-app: elasticsearch-logging
 ---
+# RBAC authn and authz
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -127,6 +145,7 @@ metadata:
   namespace: kube-system
   labels:
     k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 ---
 kind: ClusterRole
@@ -135,6 +154,7 @@ metadata:
   name: elasticsearch-logging
   labels:
     k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 rules:
 - apiGroups:
@@ -153,6 +173,7 @@ metadata:
   name: elasticsearch-logging
   labels:
     k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 subjects:
 - kind: ServiceAccount
@@ -164,7 +185,6 @@ roleRef:
   name: elasticsearch-logging
   apiGroup: ""
 ---
-# Elasticsearch deployment itself
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -172,7 +192,8 @@ metadata:
   namespace: kube-system
   labels:
     k8s-app: elasticsearch-logging
-    version: v7.2.0
+    version: v6.2.5
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 spec:
   serviceName: elasticsearch-logging
@@ -180,18 +201,18 @@ spec:
   selector:
     matchLabels:
       k8s-app: elasticsearch-logging
-      version: v7.2.0
+      version: v6.2.5
   template:
     metadata:
       labels:
         k8s-app: elasticsearch-logging
-        version: v7.2.0
+        version: v6.2.5
+        kubernetes.io/cluster-service: "true"
     spec:
       serviceAccountName: elasticsearch-logging
       containers:
-      - image: quay.io/fluentd_elasticsearch/elasticsearch:v7.2.0
+      - image: k8s.gcr.io/elasticsearch:v6.2.5
         name: elasticsearch-logging
-        imagePullPolicy: Always
         resources:
           # need more cpu upon initialization, therefore burstable class
           limits:
@@ -213,9 +234,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-      volumes:
-      - name: elasticsearch-logging
-        emptyDir: {}
       # Elasticsearch requires vm.max_map_count to be at least 262144.
       # If your OS already sets up this number to a higher value, feel free
       # to remove this init container.
@@ -235,6 +253,11 @@ spec:
         requests:
           storage: 31Gi
 ---
+
+#
+# Finally, Kibana - for visualising the results
+#
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -242,6 +265,7 @@ metadata:
   namespace: kube-system
   labels:
     k8s-app: kibana-logging
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
 spec:
   replicas: 1
@@ -257,7 +281,7 @@ spec:
     spec:
       containers:
       - name: kibana-logging
-        image: docker.elastic.co/kibana/kibana-oss:7.2.0
+        image: docker.elastic.co/kibana/kibana-oss:6.2.4
         resources:
           # need more cpu upon initialization, therefore burstable class
           limits:
@@ -265,30 +289,13 @@ spec:
           requests:
             cpu: 100m
         env:
-          - name: ELASTICSEARCH_HOSTS
+          - name: ELASTICSEARCH_URL
             value: http://elasticsearch-logging:9200
-          - name: SERVER_NAME
-            value: kibana-logging
-          - name: SERVER_BASEPATH
-            value: /api/v1/namespaces/kube-system/services/kibana-logging/proxy
-          - name: SERVER_REWRITEBASEPATH
-            value: "false"
         ports:
         - containerPort: 5601
           name: ui
           protocol: TCP
-        livenessProbe:
-          httpGet:
-            path: /api/status
-            port: ui
-          initialDelaySeconds: 5
-          timeoutSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /api/status
-            port: ui
-          initialDelaySeconds: 5
-          timeoutSeconds: 10
+
 ---
 apiVersion: v1
 kind: Service
@@ -297,7 +304,7 @@ metadata:
   namespace: kube-system
   labels:
     k8s-app: kibana-logging
-    #kubernetes.io/cluster-service: "true"
+    kubernetes.io/cluster-service: "true"
     addonmanager.kubernetes.io/mode: Reconcile
     kubernetes.io/name: "Kibana"
 spec:
@@ -308,3 +315,4 @@ spec:
   selector:
     k8s-app: kibana-logging
   type: LoadBalancer
+
